@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>관리자 모니터링 · 메모 · 할일</title>
+<!--
+  Memo_Jim 관리자 페이지 (admin.html)
+  - 사용자 목록 · 상태 모니터링, 승인/정지, 비밀번호 재설정 메일 발송, 관리자 지정
+  - 관리자는 사용자 데이터(메모·작업·첨부)와 비밀번호를 볼 수 없음 (Firestore 보안 규칙으로 차단)
+  - index.html 과 같은 Firebase 프로젝트(memo-jim)를 사용
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&display=swap');
+  :root{
+    --bg:#f6f2ea; --surface:#fffdf8; --border:#e0d8c5; --line:#ebe4d4;
+    --text:#2c2620; --text-muted:#8a8171; --accent:#b8792f; --accent-soft:#f0dfc0;
+    --danger:#b3452f; --danger-soft:#f3ddd4; --ok:#4c8a5b; --ok-soft:#dcecdf; --info:#3f51b5; --info-soft:#e3e6f6;
+    --warn:#a8741a; --warn-soft:#f7ead0;
+    --shadow: 0 1px 2px rgba(44,38,32,.06), 0 6px 20px rgba(44,38,32,.08);
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#1b1812; --surface:#242019; --border:#3a352a; --line:#2f2a21;
+      --text:#ece5d6; --text-muted:#9c9483; --accent:#e0a855; --accent-soft:#3d3018;
+      --danger:#e2775a; --danger-soft:#3d2620; --ok:#8fc79c; --ok-soft:#213228; --info:#9fa8f0; --info-soft:#262a45;
+      --warn:#e5b45c; --warn-soft:#3a2f18;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.4);
+    }
+  }
+  *{ box-sizing:border-box; }
+  [hidden]{ display:none !important; }
+  body{ margin:0; background:var(--bg); color:var(--text); font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',system-ui,sans-serif; font-variant-numeric:tabular-nums; }
+  button, input, select{ font:inherit; color:inherit; }
+  a{ color:var(--accent); }
+  .top{ display:flex; align-items:center; gap:10px; padding:12px 20px; border-bottom:1px solid var(--border); background:var(--surface); position:sticky; top:0; z-index:5; flex-wrap:wrap; }
+  .top h1{ font-size:1.1rem; margin:0; }
+  .top .grow{ flex:1; }
+  .top .who{ font-size:.82rem; color:var(--text-muted); }
+  .btn{ border:1px solid var(--border); background:var(--surface); padding:6px 12px; border-radius:8px; font-weight:600; font-size:.82rem; cursor:pointer; text-decoration:none; color:var(--text); display:inline-flex; align-items:center; gap:5px; white-space:nowrap; }
+  .btn:hover{ border-color:var(--accent); color:var(--accent); }
+  .btn.primary{ background:var(--accent); color:#fff9ef; border-color:transparent; }
+  .btn.danger{ color:var(--danger); }
+  .btn.danger:hover{ border-color:var(--danger); }
+  .btn.sm{ padding:4px 9px; font-size:.76rem; }
+  .btn:disabled{ opacity:.45; cursor:not-allowed; }
+  main{ max-width:1180px; margin:0 auto; padding:20px 16px 60px; }
+  .notice{ background:var(--info-soft); color:var(--text); border-radius:12px; padding:12px 16px; font-size:.84rem; line-height:1.6; margin-bottom:18px; }
+  .notice b{ color:var(--info); }
+  .stats{ display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:12px; margin-bottom:18px; }
+  .stat{ background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px 16px; }
+  .stat .k{ font-size:.76rem; color:var(--text-muted); font-weight:700; }
+  .stat .v{ font-size:1.7rem; font-weight:700; margin-top:4px; }
+  .stat.warn .v{ color:var(--warn); } .stat.bad .v{ color:var(--danger); } .stat.good .v{ color:var(--ok); }
+  .card{ background:var(--surface); border:1px solid var(--border); border-radius:12px; margin-bottom:18px; }
+  .card-h{ display:flex; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  .card-h h2{ font-size:.95rem; margin:0; }
+  .card-h .grow{ flex:1; }
+  .card-b{ padding:14px 16px; }
+  .search{ padding:6px 10px; border:1px solid var(--border); border-radius:8px; background:var(--bg); font-size:.84rem; width:220px; max-width:100%; }
+  .tbl-wrap{ overflow-x:auto; }
+  table{ width:100%; border-collapse:collapse; font-size:.83rem; }
+  th{ text-align:left; font-size:.72rem; color:var(--text-muted); font-weight:700; padding:9px 12px; border-bottom:1px solid var(--border); white-space:nowrap; }
+  td{ padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  tr:last-child td{ border-bottom:none; }
+  td .nm{ font-weight:700; }
+  td .em{ color:var(--text-muted); font-size:.76rem; }
+  td.num{ text-align:right; white-space:nowrap; }
+  td.acts{ white-space:nowrap; }
+  td.acts .btn{ margin:2px 2px; }
+  .pill{ display:inline-block; font-size:.7rem; font-weight:700; padding:2px 8px; border-radius:999px; white-space:nowrap; }
+  .pill.active{ background:var(--ok-soft); color:var(--ok); }
+  .pill.pending{ background:var(--warn-soft); color:var(--warn); }
+  .pill.disabled{ background:var(--danger-soft); color:var(--danger); }
+  .pill.admin{ background:var(--info-soft); color:var(--info); margin-left:4px; }
+  .pill.g{ background:#dcefe2; color:#0b8043; }
+  .muted{ color:var(--text-muted); font-size:.82rem; }
+  .row{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:8px 0; font-size:.86rem; }
+  .row input[type=text]{ flex:1; min-width:240px; padding:7px 10px; border:1px solid var(--border); border-radius:8px; background:var(--bg); font-size:.82rem; }
+  .switch{ display:inline-flex; align-items:center; gap:8px; cursor:pointer; font-weight:600; }
+  .switch input{ width:17px; height:17px; accent-color:var(--accent); }
+  pre{ background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:12px; font-size:.74rem; overflow:auto; max-height:360px; line-height:1.5; }
+  ol.steps{ font-size:.84rem; line-height:1.8; padding-left:20px; margin:6px 0; }
+  code{ background:var(--bg); padding:1px 5px; border-radius:4px; font-size:.8rem; }
+  .login{ max-width:400px; margin:60px auto; background:var(--surface); border:1px solid var(--border); border-radius:16px; box-shadow:var(--shadow); padding:26px 24px; }
+  .login h2{ margin:0 0 4px; }
+  .login label{ display:block; font-size:.76rem; font-weight:700; color:var(--text-muted); margin:12px 0 4px; }
+  .login input{ width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:9px; background:var(--bg); font-size:.95rem; }
+  .login .btn.primary{ width:100%; justify-content:center; margin-top:16px; padding:11px; font-size:.95rem; }
+  .msg{ margin-top:12px; font-size:.82rem; padding:9px 11px; border-radius:8px; background:var(--danger-soft); color:var(--danger); line-height:1.5; }
+  .msg.ok{ background:var(--ok-soft); color:var(--ok); }
+  .toast{ position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:var(--text); color:var(--bg); padding:9px 16px; border-radius:8px; font-size:.84rem; font-weight:600; opacity:0; pointer-events:none; transition:opacity .2s; z-index:100; }
+  .toast.show{ opacity:1; }
+  @media (max-width: 700px){ .top .who{ display:none; } th.hide-m, td.hide-m{ display:none; } }
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>🛠 관리자 모니터링</h1>
+  <span class="grow"></span>
+  <span class="who" id="who"></span>
+  <a class="btn" href="./">← 앱으로</a>
+  <button class="btn" id="logoutBtn" hidden>로그아웃</button>
+</div>
+<main id="main"><div class="muted" style="padding:40px; text-align:center">불러오는 중…</div></main>
+<div class="toast" id="toast"></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script>
+(function(){
+  'use strict';
+  var firebaseConfig = {
+    apiKey: "AIzaSyBynC7P10r1d8qZ_RSDwvtKibV4EONWXxY",
+    authDomain: "memo-jim.firebaseapp.com",
+    projectId: "memo-jim",
+    storageBucket: "memo-jim.firebasestorage.app",
+    messagingSenderId: "409352030033",
+    appId: "1:409352030033:web:c765f028cf0f7523e4b570",
+    measurementId: "G-PYBF218KJ5"
+  };
+
+  // 앱과 관리자 페이지가 함께 쓰는 Firestore 보안 규칙 (Firebase 콘솔 → Firestore → 규칙 에 붙여넣기)
+  var RULES = [
+"rules_version = '2';",
+"service cloud.firestore {",
+"  match /databases/{database}/documents {",
+"    function signedIn() { return request.auth != null && request.auth.token.firebase.sign_in_provider == 'password'; }",
+"    function me() { return request.auth.uid; }",
+"    function isAdmin() { return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }",
+"    function pubPath() { return /databases/$(database)/documents/config/public; }",
+"    function needApproval() { return exists(pubPath()) && get(pubPath()).data.get('requireApproval', false) == true; }",
+"    function isActive(uid) {",
+"      return exists(/databases/$(database)/documents/userProfiles/$(uid))",
+"        && get(/databases/$(database)/documents/userProfiles/$(uid)).data.status == 'active';",
+"    }",
+"",
+"    // 공개 정보: 관리자 존재 여부, 가입 승인 필요 여부",
+"    match /config/public {",
+"      allow read: if true;",
+"      allow create: if signedIn() && existsAfter(/databases/$(database)/documents/admins/$(request.auth.uid));",
+"      allow update: if isAdmin();",
+"    }",
+"    // 앱 공통 설정 (구글 OAuth 클라이언트 ID 등)",
+"    match /config/app {",
+"      allow read: if signedIn();",
+"      allow write: if isAdmin();",
+"    }",
+"    // 관리자 목록 — 첫 관리자는 config/public 과 함께 한 번만 등록 가능",
+"    match /admins/{uid} {",
+"      allow read: if signedIn() && (uid == me() || isAdmin());",
+"      allow create: if isAdmin() || (signedIn() && uid == me() && !exists(pubPath()) && existsAfter(pubPath()));",
+"      allow delete: if isAdmin() && uid != me();",
+"    }",
+"    // 사용자 프로필 (이름·이메일·상태·접속시각·개수만 — 내용 없음)",
+"    match /userProfiles/{uid} {",
+"      allow read: if signedIn() && (uid == me() || isAdmin());",
+"      allow create: if signedIn() && uid == me()",
+"        && request.resource.data.email == request.auth.token.email",
+"        && (request.resource.data.status == 'pending' || (request.resource.data.status == 'active' && !needApproval()));",
+"      allow update: if isAdmin() || (signedIn() && uid == me()",
+"        && request.resource.data.status == resource.data.status",
+"        && request.resource.data.email == resource.data.email);",
+"      allow delete: if isAdmin();",
+"    }",
+"    // 사용자 데이터 — 본인만 (관리자도 접근 불가)",
+"    match /users/{uid}/{doc=**} {",
+"      allow read, write: if signedIn() && uid == me() && isActive(uid);",
+"    }",
+"    // 이전 버전(공용) 데이터 — 관리자가 자기 계정으로 옮긴 뒤 삭제용",
+"    match /{legacy}/{id} {",
+"      allow read, delete: if isAdmin() && legacy in ['notes', 'tasks', 'files', 'fileChunks', 'gmarks', 'settings'];",
+"    }",
+"  }",
+"}"].join('\n');
+
+  var LEGACY = ['notes', 'tasks', 'files', 'fileChunks', 'gmarks'];
+  var ERR = {
+    'auth/invalid-credential':'이메일 또는 비밀번호가 맞지 않아요.', 'auth/wrong-password':'비밀번호가 맞지 않아요.',
+    'auth/user-not-found':'등록되지 않은 이메일이에요.', 'auth/too-many-requests':'시도가 너무 많아요. 잠시 후 다시 해주세요.',
+    'auth/operation-not-allowed':'Firebase 콘솔에서 ‘이메일/비밀번호’ 로그인을 켜야 해요.',
+    'permission-denied':'권한이 없어요 — 아래 ‘보안 규칙’을 Firebase 콘솔에 적용했는지 확인하세요.'
+  };
+  function errText(e){ var c = (e && e.code) || ''; return ERR[c] || ERR[c.replace(/^firestore\//, '')] || (e && e.message) || '오류'; }
+
+  function h(tag, props, kids){
+    var el = document.createElement(tag);
+    if(props) for(var k in props){
+      var v = props[k]; if(v == null || v === false) continue;
+      if(k === 'class') el.className = v; else if(k === 'text') el.textContent = v; else if(k === 'html') el.innerHTML = v;
+      else if(k === 'style') el.style.cssText = v; else if(k.slice(0,2) === 'on') el.addEventListener(k.slice(2), v);
+      else if(k === 'value' || k === 'checked' || k === 'disabled') el[k] = v; else el.setAttribute(k, v === true ? '' : v);
+    }
+    (function add(l){ (Array.isArray(l) ? l : [l]).forEach(function(c){ if(c == null || c === false) return; if(Array.isArray(c)) add(c); else el.appendChild(typeof c === 'string' || typeof c === 'number' ? document.createTextNode(String(c)) : c); }); })(kids || []);
+    return el;
+  }
+  var toastT;
+  function toast(m){ var t = document.getElementById('toast'); t.textContent = m; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(function(){ t.classList.remove('show'); }, 2600); }
+  function pad(n){ return n < 10 ? '0' + n : '' + n; }
+  function fmt(ts){ if(!ts) return '—'; var d = new Date(ts); return d.getFullYear() + '.' + pad(d.getMonth()+1) + '.' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()); }
+  function ago(ts){
+    if(!ts) return '—'; var s = (Date.now() - ts) / 1000;
+    if(s < 90) return '방금'; if(s < 3600) return Math.round(s/60) + '분 전'; if(s < 86400) return Math.round(s/3600) + '시간 전';
+    if(s < 86400*30) return Math.round(s/86400) + '일 전'; return fmt(ts).slice(0, 10);
+  }
+  var main = document.getElementById('main');
+
+  if(location.protocol === 'file:'){ main.innerHTML = '<div class="login"><h2>웹 주소로 열어주세요</h2><p class="muted">이 페이지는 https://exjim.github.io/Memo_Jim/admin.html 에서 열어야 동작해요.</p></div>'; return; }
+  firebase.initializeApp(firebaseConfig);
+  var auth = firebase.auth(), db = firebase.firestore();
+  var me = null, profiles = [], admins = {}, pub = {}, app = {}, unsubs = [], filter = '';
+
+  document.getElementById('logoutBtn').onclick = function(){ auth.signOut(); };
+
+  function loginView(msg){
+    main.innerHTML = '';
+    var em = h('input', { type:'email', placeholder:'관리자 이메일', autocomplete:'email' });
+    var pw = h('input', { type:'password', placeholder:'비밀번호', autocomplete:'current-password' });
+    var box = h('div');
+    var btn = h('button', { class:'btn primary', type:'submit', text:'관리자 로그인' });
+    function setMsg(t, ok){ box.innerHTML = ''; if(t) box.appendChild(h('div', { class:'msg' + (ok ? ' ok' : ''), text:t })); }
+    if(msg) setMsg(msg);
+    main.appendChild(h('form', { class:'login', onsubmit:async function(e){
+      e.preventDefault(); btn.disabled = true; setMsg('');
+      try{ await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL); await auth.signInWithEmailAndPassword(em.value.trim(), pw.value); }
+      catch(err){ setMsg(errText(err)); btn.disabled = false; }
+    } }, [
+      h('h2', { text:'관리자 로그인' }),
+      h('div', { class:'muted', text:'앱과 같은 계정으로 로그인하세요. 첫 관리자 등록은 앱 첫 화면의 ‘관리자 등록’에서 해요.' }),
+      h('label', { text:'이메일' }), em, h('label', { text:'비밀번호' }), pw, btn, box
+    ]));
+    em.focus();
+  }
+
+  auth.onAuthStateChanged(async function(user){
+    unsubs.forEach(function(u){ u(); }); unsubs = [];
+    me = user;
+    document.getElementById('logoutBtn').hidden = !user;
+    document.getElementById('who').textContent = user ? user.email : '';
+    if(!user || user.isAnonymous){ loginView(); return; }
+    var isAdmin = false;
+    try{ isAdmin = (await db.collection('admins').doc(user.uid).get()).exists; }catch(e){}
+    if(!isAdmin){
+      main.innerHTML = '';
+      main.appendChild(h('div', { class:'login' }, [ h('h2', { text:'관리자 권한이 없어요' }),
+        h('p', { class:'muted', text:user.email + ' 계정은 관리자가 아니에요. 기존 관리자에게 관리자 지정을 요청하세요.' }),
+        h('a', { class:'btn', href:'./', text:'← 앱으로 돌아가기' }) ]));
+      return;
+    }
+    main.innerHTML = '<div class="muted" style="padding:40px; text-align:center">불러오는 중…</div>';
+    function fail(e){ toast(errText(e)); }
+    unsubs.push(db.collection('userProfiles').onSnapshot(function(s){ profiles = s.docs.map(function(d){ return Object.assign({ uid:d.id }, d.data()); }); render(); }, fail));
+    unsubs.push(db.collection('admins').onSnapshot(function(s){ admins = {}; s.docs.forEach(function(d){ admins[d.id] = d.data(); }); render(); }, fail));
+    unsubs.push(db.collection('config').doc('public').onSnapshot(function(d){ pub = d.exists ? d.data() : {}; render(); }, fail));
+    unsubs.push(db.collection('config').doc('app').onSnapshot(function(d){ app = d.exists ? d.data() : {}; render(); }, fail));
+  });
+
+  // ---------- 동작 ----------
+  function setStatus(p, status){
+    return db.collection('userProfiles').doc(p.uid).update({ status:status, statusAt:Date.now(), statusBy:me.email })
+      .then(function(){ toast(p.email + ' → ' + ({ active:'사용 중', pending:'승인 대기', disabled:'정지' })[status]); })
+      .catch(function(e){ toast(errText(e)); });
+  }
+  function resetPw(p){
+    auth.sendPasswordResetEmail(p.email)
+      .then(function(){ toast(p.email + ' 로 비밀번호 재설정 메일을 보냈어요'); return db.collection('userProfiles').doc(p.uid).update({ pwResetAt:Date.now(), pwResetBy:me.email }); })
+      .catch(function(e){ toast(errText(e)); });
+  }
+  function setAdmin(p, on){
+    var ref = db.collection('admins').doc(p.uid);
+    (on ? ref.set({ email:p.email, createdAt:Date.now(), by:me.email }) : ref.delete())
+      .then(function(){ toast(p.email + (on ? ' 관리자 지정' : ' 관리자 해제')); }).catch(function(e){ toast(errText(e)); });
+  }
+  function confirmBtn(label, cls, fn){
+    var b = h('button', { class:'btn sm ' + (cls || ''), type:'button', text:label });
+    b.onclick = function(){
+      if(b.dataset.arm){ fn(); return; }
+      b.dataset.arm = 1; var t = b.textContent; b.textContent = '확인?'; b.classList.add('danger');
+      setTimeout(function(){ if(b.isConnected){ delete b.dataset.arm; b.textContent = t; if(cls !== 'danger') b.classList.remove('danger'); } }, 2500);
+    };
+    return b;
+  }
+
+  // ---------- 이전 데이터 옮기기 ----------
+  async function legacyCount(){
+    var n = 0;
+    for(var i = 0; i < LEGACY.length; i++){ var s = await db.collection(LEGACY[i]).limit(500).get(); n += s.size; }
+    return n;
+  }
+  async function migrate(btn, out){
+    btn.disabled = true;
+    var root = db.collection('users').doc(me.uid), moved = 0;
+    try{
+      for(var i = 0; i < LEGACY.length; i++){
+        var name = LEGACY[i], snap = await db.collection(name).get();
+        out.textContent = name + ' ' + snap.size + '개 옮기는 중…';
+        var batch = db.batch(), inBatch = 0;
+        for(var j = 0; j < snap.docs.length; j++){
+          var d = snap.docs[j];
+          if(name === 'fileChunks'){ await root.collection(name).doc(d.id).set(d.data()); }
+          else { batch.set(root.collection(name).doc(d.id), d.data()); inBatch++; if(inBatch >= 400){ await batch.commit(); batch = db.batch(); inBatch = 0; } }
+          moved++;
+        }
+        if(inBatch) await batch.commit();
+      }
+      var g = await db.collection('settings').doc('gcal').get();
+      if(g.exists){
+        var v = g.data(), cid = v.clientId; delete v.clientId;
+        await root.collection('settings').doc('gcal').set(v, { merge:true });
+        if(cid && !app.gcalClientId) await db.collection('config').doc('app').set({ gcalClientId:cid, updatedAt:Date.now() }, { merge:true });
+      }
+      out.textContent = '✅ ' + moved + '개를 내 계정(' + me.email + ')으로 옮겼어요. 앱에서 확인한 뒤 ‘이전 데이터 삭제’를 누르세요.';
+    }catch(e){ out.textContent = '실패: ' + errText(e); }
+    btn.disabled = false;
+  }
+  async function wipeLegacy(out){
+    try{
+      var n = 0;
+      for(var i = 0; i < LEGACY.concat(['settings']).length; i++){
+        var name = LEGACY.concat(['settings'])[i], s = await db.collection(name).get();
+        for(var j = 0; j < s.docs.length; j++){ await s.docs[j].ref.delete(); n++; }
+      }
+      out.textContent = '🗑 이전 공용 데이터 ' + n + '개를 삭제했어요.';
+    }catch(e){ out.textContent = '실패: ' + errText(e); }
+  }
+
+  // ---------- 화면 ----------
+  function render(){
+    if(!me) return;
+    main.innerHTML = '';
+    var now = Date.now(), week = 7 * 86400000;
+    var c = { all:profiles.length, active:0, pending:0, disabled:0, recent:0, gcal:0 };
+    profiles.forEach(function(p){ c[p.status] = (c[p.status] || 0) + 1; if(p.lastActive && now - p.lastActive < week) c.recent++; if(p.gcal) c.gcal++; });
+
+    main.appendChild(h('div', { class:'notice', html:
+      '<b>개인정보 보호</b> — 관리자는 사용자 목록·상태·접속 시각·항목 <u>개수</u>만 볼 수 있어요. 메모·작업·첨부 <u>내용</u>과 <u>비밀번호</u>는 볼 수 없어요 ' +
+      '(비밀번호는 Firebase가 암호화 저장, 데이터는 보안 규칙으로 본인만 접근). 비밀번호를 잊은 사용자는 ‘재설정 메일’을 보내면 본인이 새 비밀번호를 정해요.' }));
+
+    main.appendChild(h('div', { class:'stats' }, [
+      stat('전체 사용자', c.all), stat('사용 중', c.active, 'good'), stat('승인 대기', c.pending, c.pending ? 'warn' : ''),
+      stat('정지', c.disabled, c.disabled ? 'bad' : ''), stat('최근 7일 접속', c.recent), stat('구글 캘린더 연결', c.gcal)
+    ]));
+
+    // 사용자 표
+    var q = h('input', { class:'search', type:'search', placeholder:'이름·이메일 검색', value:filter, oninput:function(){ filter = q.value; fillRows(); } });
+    var tbody = h('tbody');
+    function fillRows(){
+      tbody.innerHTML = '';
+      var f = filter.trim().toLowerCase();
+      var list = profiles.filter(function(p){ return !f || ((p.name || '') + ' ' + (p.email || '')).toLowerCase().indexOf(f) > -1; })
+        .sort(function(a, b){ var o = { pending:0, active:1, disabled:2 }; return (o[a.status] - o[b.status]) || ((b.lastActive || 0) - (a.lastActive || 0)); });
+      if(!list.length) tbody.appendChild(h('tr', {}, [ h('td', { colspan:'7', class:'muted', text:'사용자가 없어요.' }) ]));
+      list.forEach(function(p){
+        var isA = !!admins[p.uid], self = p.uid === me.uid, cn = p.counts || {};
+        var acts = [];
+        if(p.status === 'pending') acts.push(h('button', { class:'btn sm primary', type:'button', text:'승인', onclick:function(){ setStatus(p, 'active'); } }));
+        if(p.status === 'active' && !self) acts.push(confirmBtn('정지', '', function(){ setStatus(p, 'disabled'); }));
+        if(p.status === 'disabled') acts.push(h('button', { class:'btn sm', type:'button', text:'정지 해제', onclick:function(){ setStatus(p, 'active'); } }));
+        acts.push(confirmBtn('비밀번호 재설정 메일', '', function(){ resetPw(p); }));
+        if(!self) acts.push(isA ? confirmBtn('관리자 해제', '', function(){ setAdmin(p, false); }) : confirmBtn('관리자 지정', '', function(){ setAdmin(p, true); }));
+        tbody.appendChild(h('tr', {}, [
+          h('td', {}, [ h('div', { class:'nm' }, [ p.name || '—', isA ? h('span', { class:'pill admin', text:'관리자' }) : null, self ? h('span', { class:'em', text:'  (나)' }) : null ]), h('div', { class:'em', text:p.email }) ]),
+          h('td', {}, [ h('span', { class:'pill ' + p.status, text:({ active:'사용 중', pending:'승인 대기', disabled:'정지' })[p.status] || p.status }), p.gcal ? h('span', { class:'pill g', style:'margin-left:4px', text:'G' }) : null ]),
+          h('td', { class:'hide-m', text:fmt(p.createdAt).slice(0, 10) }),
+          h('td', { title:fmt(p.lastActive), text:ago(p.lastActive) }),
+          h('td', { class:'num hide-m', text:(cn.tasks || 0) + ' / ' + (cn.notes || 0) + ' / ' + (cn.files || 0) }),
+          h('td', { class:'hide-m', text:p.pwResetAt ? ago(p.pwResetAt) : '—' }),
+          h('td', { class:'acts' }, acts)
+        ]));
+      });
+    }
+    fillRows();
+    main.appendChild(h('div', { class:'card' }, [
+      h('div', { class:'card-h' }, [ h('h2', { text:'사용자 (' + profiles.length + ')' }), h('span', { class:'grow' }), q ]),
+      h('div', { class:'tbl-wrap' }, [ h('table', {}, [
+        h('thead', {}, [ h('tr', {}, [ h('th', { text:'사용자' }), h('th', { text:'상태' }), h('th', { class:'hide-m', text:'가입일' }), h('th', { text:'마지막 사용' }),
+          h('th', { class:'num hide-m', text:'작업/메모/첨부 수' }), h('th', { class:'hide-m', text:'재설정 메일' }), h('th', { text:'관리' }) ]) ]),
+        tbody ]) ])
+    ]));
+
+    // 설정
+    var appr = h('input', { type:'checkbox', checked:!!pub.requireApproval, onchange:function(){
+      db.collection('config').doc('public').set({ requireApproval:appr.checked, adminExists:true }, { merge:true })
+        .then(function(){ toast(appr.checked ? '새 가입자는 승인 후 사용' : '누구나 가입 즉시 사용'); }).catch(function(e){ toast(errText(e)); });
+    } });
+    var cid = h('input', { type:'text', value:app.gcalClientId || '', placeholder:'…apps.googleusercontent.com' });
+    main.appendChild(h('div', { class:'card' }, [
+      h('div', { class:'card-h' }, [ h('h2', { text:'설정' }) ]),
+      h('div', { class:'card-b' }, [
+        h('label', { class:'switch' }, [ appr, h('span', { text:'새 사용자는 관리자 승인 후 사용 (끄면 등록 즉시 사용)' }) ]),
+        h('div', { class:'row', style:'margin-top:14px' }, [ h('b', { text:'구글 OAuth 클라이언트 ID' }), cid,
+          h('button', { class:'btn', type:'button', text:'저장', onclick:function(){
+            db.collection('config').doc('app').set({ gcalClientId:cid.value.trim(), updatedAt:Date.now() }, { merge:true })
+              .then(function(){ toast('저장했어요 — 모든 사용자에게 적용'); }).catch(function(e){ toast(errText(e)); }); } }) ]),
+        h('div', { class:'muted', html:'구글 로그인 앱이 ‘테스트’ 상태라면, 새 사용자의 Gmail을 ' +
+          '<a href="https://console.cloud.google.com/auth/audience" target="_blank" rel="noopener">Google Cloud → 대상 → 테스트 사용자</a>에 추가해야 그 사람이 구글 캘린더를 연결할 수 있어요 (최대 100명).' })
+      ])
+    ]));
+
+    // 이전 데이터
+    var out = h('div', { class:'muted', style:'margin-top:8px' });
+    var mBtn = h('button', { class:'btn primary', type:'button', text:'내 계정으로 옮기기', onclick:function(){ migrate(mBtn, out); } });
+    var cntSpan = h('span', { class:'muted', text:'확인 중…' });
+    legacyCount().then(function(n){ cntSpan.textContent = n ? '이전 공용 데이터 ' + n + '개가 남아 있어요.' : '남아 있는 이전 데이터가 없어요.'; if(!n) mBtn.disabled = true; })
+      .catch(function(){ cntSpan.textContent = '확인할 수 없어요 (보안 규칙 적용 전이면 정상).'; });
+    main.appendChild(h('div', { class:'card' }, [
+      h('div', { class:'card-h' }, [ h('h2', { text:'이전 버전 데이터 (로그인 기능 전 공용 데이터)' }) ]),
+      h('div', { class:'card-b' }, [
+        h('div', { class:'muted', text:'로그인 기능 이전에 모두가 같이 쓰던 메모·작업·첨부예요. 관리자(본인) 계정으로 한 번 옮기고, 앱에서 확인한 뒤 삭제하세요.' }),
+        h('div', { class:'row' }, [ cntSpan, mBtn, confirmBtn('이전 데이터 삭제', 'danger', function(){ wipeLegacy(out); }) ]), out
+      ])
+    ]));
+
+    // 설치 안내 + 규칙
+    main.appendChild(h('div', { class:'card' }, [
+      h('div', { class:'card-h' }, [ h('h2', { text:'Firebase 설정 (처음 한 번)' }), h('span', { class:'grow' }),
+        h('button', { class:'btn', type:'button', text:'규칙 복사', onclick:function(){ navigator.clipboard.writeText(RULES).then(function(){ toast('보안 규칙을 복사했어요'); }); } }) ]),
+      h('div', { class:'card-b' }, [
+        h('ol', { class:'steps', html:
+          '<li><a href="https://console.firebase.google.com/project/memo-jim/authentication/providers" target="_blank" rel="noopener">Authentication → 로그인 방법</a>에서 <b>이메일/비밀번호</b>를 사용 설정 (익명 로그인은 꺼도 돼요)</li>' +
+          '<li><a href="https://console.firebase.google.com/project/memo-jim/authentication/settings" target="_blank" rel="noopener">Authentication → 설정 → 승인된 도메인</a>에 <code>exjim.github.io</code> 확인</li>' +
+          '<li><a href="https://console.firebase.google.com/project/memo-jim/firestore/rules" target="_blank" rel="noopener">Firestore → 규칙</a>에 아래 규칙을 붙여넣고 <b>게시</b></li>' +
+          '<li>사용자를 완전히 지우려면 <a href="https://console.firebase.google.com/project/memo-jim/authentication/users" target="_blank" rel="noopener">Authentication → 사용자</a>에서 삭제 (여기서는 ‘정지’로 접근 차단)</li>' }),
+        h('pre', { text:RULES })
+      ])
+    ]));
+  }
+  function stat(k, v, cls){ return h('div', { class:'stat ' + (cls || '') }, [ h('div', { class:'k', text:k }), h('div', { class:'v', text:String(v) }) ]); }
+})();
+</script>
+</body>
+</html>
