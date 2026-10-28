@@ -224,11 +224,12 @@
   .pj-more > summary{ cursor:pointer; font-size:.72rem; font-weight:700; letter-spacing:.04em; color:var(--text-muted); user-select:none; }
   .pj-more > summary:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
   .pj-capture.editing .pj-row1, .pj-capture.editing .pj-proj, .pj-capture.editing #pjDue, .pj-capture.editing #pjPri{ display:none; }
-  .pj-editbox{ border:1px solid var(--accent); border-radius:9px; background:var(--surface); padding:9px 11px; }
-  .pj-eh{ display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; }
-  .pj-et{ flex:1; min-width:0; font-weight:650; font-size:.92rem; overflow-wrap:anywhere; }
-  .pj-ew{ font-size:.72rem; color:var(--text-muted); }
-  .pj-eb{ margin-top:6px; font-size:.84rem; line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; max-height:14em; overflow-y:auto; color:var(--text); }
+  .pj-editbox{ display:flex; flex-direction:column; gap:6px; }
+  .pj-capture .pj-etitle{ font-size:1.05rem; font-weight:700; }
+  .pj-erow{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .pj-capture .pj-eplan{ flex:1 1 220px; width:auto; }
+  .pj-capture .pj-edate{ flex:0 1 160px; width:auto; }
+  .pj-capture.editing textarea{ min-height:46vh; font-size:.95rem; line-height:1.7; }
   .pj-rec{ flex:none; }
   .pj-rec.on{ border-color:var(--danger); color:var(--danger); font-weight:700; }
   .pj-recinfo{ font-size:.8rem; padding:6px 9px; border:1px dashed var(--border); border-radius:8px; background:var(--surface); line-height:1.5; }
@@ -253,7 +254,6 @@
   .pj-nt{ flex:1; min-width:0; font-weight:650; font-size:.88rem; overflow-wrap:anywhere; }
   .pj-nk, .pj-nd{ flex:none; font-size:.7rem; color:var(--text-muted); }
   .pj-nb{ margin-top:5px; font-size:.82rem; line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; max-height:15em; overflow-y:auto; }
-  .main.note-wide{ grid-template-columns: 300px minmax(0,1fr) minmax(420px,44vw); }
   .pj-empty{ grid-column:1 / -1; padding:28px 16px; text-align:center; color:var(--text-muted); font-size:.86rem; line-height:1.6; }
   .pj-empty b{ display:block; color:var(--text); font-size:.95rem; margin-bottom:4px; }
   .pj-empty p{ margin:0; }
@@ -571,11 +571,11 @@
   .lrow .lt small{ display:block; color:var(--text-muted); font-size:.7rem; }
   .lrow .ld{ font-size:.72rem; color:var(--text-muted); flex:none; }
   .lrow.done .lt{ text-decoration:line-through; opacity:.55; }
-  .memo-card{ padding:11px 13px; border:1px solid var(--border); border-radius:9px; margin-bottom:6px; cursor:pointer; background:var(--surface); }
+  .memo-card{ padding:8px 10px; border:1px solid var(--border); border-radius:9px; margin-bottom:6px; cursor:pointer; background:var(--surface); }
   .memo-card:hover{ border-color:var(--accent); }
   .memo-card .mt{ font-weight:600; font-size:.86rem; display:flex; justify-content:space-between; gap:8px; }
   .memo-card .mt span:last-child{ font-weight:500; color:var(--text-muted); font-size:.72rem; flex:none; }
-  .memo-card .ms{ font-size:.84rem; line-height:1.6; color:var(--text); margin-top:5px; white-space:pre-wrap; overflow-wrap:anywhere; max-height:16em; overflow-y:auto; }
+  .memo-card .ms{ font-size:.78rem; line-height:1.5; color:var(--text-muted); margin-top:3px; white-space:pre-line; max-height:4.5em; overflow:hidden; }
   .muted{ font-size:.8rem; color:var(--text-muted); padding:4px 2px; }
 
   .fmt-bar{ display:flex; gap:4px; margin:4px 0 6px; flex-wrap:wrap; }
@@ -587,7 +587,7 @@
     resize:vertical; width:100%; min-height:140px; padding:4px 2px; tab-size:4; -moz-tab-size:4;
   }
   .smart:focus{ outline:none; border-color:var(--border); background:color-mix(in srgb, var(--bg) 40%, transparent); }
-  .smart.big{ min-height:60vh; font-size:.95rem; line-height:1.7; }
+  .smart.big{ min-height:52vh; }
   .smart::placeholder{ color:var(--text-muted); opacity:.65; }
 
   .day-title{ font-family:'Noto Sans KR', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; font-weight:700; font-size:1.35rem; padding:14px 0 4px; display:flex; align-items:center; gap:8px; }
@@ -2599,7 +2599,6 @@
     detailEl.innerHTML = '';
     refs = {};
     mainEl.classList.toggle('with-detail', !!sel);
-    mainEl.classList.toggle('note-wide', !!sel && sel.type === 'note');
     if(!sel) return;
     if(sel.type === 'task'){ var t = getTask(sel.id); if(!t){ sel = null; mainEl.classList.remove('with-detail'); return; } buildTaskDetail(t); }
     else if(sel.type === 'note'){ var n = getNote(sel.id); if(!n){ sel = null; mainEl.classList.remove('with-detail'); return; } buildNoteDetail(n); }
@@ -2807,7 +2806,7 @@
   function memoCard(n){
     return h('div', { class:'memo-card', onclick:function(){ selectNote(n.id); } }, [
       h('div', { class:'mt' }, [ h('span', { text:'📝 ' + noteTitle(n) }), h('span', { text: noteDate(n) ? fmtMD(noteDate(n)) : '' }) ]),
-      (n.body || '').trim() ? h('div', { class:'ms', text:(n.body || '').trim() }) : null
+      (n.body || '').trim() ? h('div', { class:'ms', text:(n.body || '').trim().split('\n').slice(0, 3).join('\n') }) : null
     ]);
   }
 
@@ -3048,65 +3047,90 @@
   }
 
 
-  /* ---------- 메모를 입력창에 올려 두고 이어 쓰기 ---------- */
+  /* ---------- 위쪽 큰 메모창: 아래 목록에서 고른 메모를 불러와 미팅 중 쓰고 녹음 ---------- */
+  var pjSnap = '', pjAutoT = 0;
+  function pjPlanOptions(sel, pid, cur){
+    sel.textContent = '';
+    sel.appendChild(h('option', { value:pid, text:'프로젝트 전체' }));
+    TREE.rows.forEach(function(r){
+      if(r.level < 1 || pjProjectOf(r.task).id !== pid) return;
+      sel.appendChild(h('option', { value:r.task.id, text:'　'.repeat(r.level - 1) + r.num + '  ' + pjName(r.task) }));
+    });
+    sel.value = cur;
+  }
+  function pjEditState(){ var f = projForm; return JSON.stringify([f.eTitle.value, f.ePlan.value, f.eDate.value, f.text.value]); }
+  function pjDirty(){
+    if(!pjEdit) return;
+    clearTimeout(pjAutoT);
+    pjAutoT = setTimeout(function(){ pjSaveEdit(true); }, 1500);   // 쓰는 동안 자동 저장
+  }
+  function pjFlush(){ clearTimeout(pjAutoT); if(pjEdit && pjEditState() !== pjSnap) pjSaveEdit(true); }
   function pjOpenNote(n){
-    var tk = n.taskId ? getTask(n.taskId) : null;
     if(!projWrap) buildProjectShell();
-    if(tk){ projUi.project = pjProjectOf(tk).id; saveProjUi(); projForm.proj.value = projUi.project; }
+    pjFlush();
+    var f = projForm, tk = n.taskId ? getTask(n.taskId) : null;
+    var proj = tk ? pjProjectOf(tk) : null;
+    if(proj){ projUi.project = proj.id; saveProjUi(); f.proj.value = proj.id; }
     pjEdit = n.id;
+    pjPlanOptions(f.ePlan, proj ? proj.id : '', tk ? tk.id : (proj ? proj.id : ''));
+    f.eTitle.value = n.title || '';
+    f.eDate.value = noteDate(n) || '';
+    f.text.value = n.body || '';
+    pjSnap = pjEditState();
     pjRenderEdit();
+    pjAutosize();
     projWrap.scrollTop = 0;
-    projForm.text.focus();
+    f.text.focus();
+    f.text.setSelectionRange(f.text.value.length, f.text.value.length);
+    f.text.scrollTop = f.text.scrollHeight;
   }
   function pjCloseEdit(){
+    pjFlush();
     pjEdit = '';
+    projForm.text.value = '';
     pjRenderEdit();
+    pjAutosize();
   }
   function pjRenderEdit(){
     var f = projForm, n = pjEdit ? getNote(pjEdit) : null;
-    if(pjEdit && !n) pjEdit = '';
+    if(pjEdit && !n){ pjEdit = ''; f.text.value = ''; }
     var on = !!n;
     f.capture.classList.toggle('editing', on);
     f.editBox.hidden = !on;
-    f.editBox.textContent = '';
-    f.save.textContent = on ? '이 메모에 추가' : '저장';
+    f.save.textContent = on ? '저장' : '저장';
     f.text.placeholder = on
-      ? '여기에 쓰거나 🎙 녹음하면 위 메모 밑에 이어서 붙어요.\n(⌘/Ctrl + Enter로 추가)'
+      ? '여기에 바로 쓰거나 🎙 녹음하세요. 쓰는 동안 자동 저장돼요.'
       : '노트처럼 길게 적어도 돼요.\n첫 줄은 제목, 나머지는 본문으로 저장됩니다.\n(⌘/Ctrl + Enter로 저장)';
-    if(!on) return;
-    var tk = n.taskId ? getTask(n.taskId) : null;
-    var where = tk ? (pjProjectOf(tk).id === tk.id ? '프로젝트 전체' : pjPath(tk)) : '미분류';
-    var body = (n.body || '').trim();
-    f.editBox.appendChild(h('div', { class:'pj-eh' }, [
-      h('span', { class:'pj-et', text:'📝 ' + noteTitle(n) }),
-      h('span', { class:'pj-ew', text:where }),
-      h('button', { type:'button', class:'pj-lnk', text:'크게 열기', onclick:function(){ selectNote(n.id); } }),
-      h('button', { type:'button', class:'pj-lnk', text:'닫기 ✕', onclick:pjCloseEdit })
-    ]));
-    f.editBox.appendChild(h('div', { class:'pj-eb', text: body || '(아직 본문이 없어요)' }));
-    var eb = f.editBox.querySelector('.pj-eb'); eb.scrollTop = eb.scrollHeight;
+    if(on){
+      var tk = n.taskId ? getTask(n.taskId) : null;
+      var proj = tk ? pjProjectOf(tk) : null;
+      if(proj && document.activeElement !== f.ePlan){ var cur = f.ePlan.value; pjPlanOptions(f.ePlan, proj.id, cur || (tk ? tk.id : proj.id)); }
+    }
   }
-  function pjAppendToNote(){
-    var f = projForm, n = getNote(pjEdit), text = f.text.value.trim();
-    if(!n){ pjCloseEdit(); toast('메모를 찾을 수 없어요'); return; }
-    if(!text){ toast('추가할 내용을 입력하세요'); f.text.focus(); return; }
-    var d = new Date();
-    var stamp = todayStr() + ' ' + recPad(d.getHours()) + ':' + recPad(d.getMinutes());
-    n.body = ((n.body || '').replace(/\s+$/, '') ? (n.body || '').replace(/\s+$/, '') + '\n\n' : '') + '── ' + stamp + ' ──\n' + text;
+  function pjSaveEdit(silent){
+    var f = projForm, n = getNote(pjEdit);
+    clearTimeout(pjAutoT);
+    if(!n){ pjCloseEdit(); return; }
+    var body = f.text.value;
+    n.title = f.eTitle.value.trim() || body.trim().split('\n')[0].slice(0, 80) || n.title || '';
+    n.body = body;
+    n.taskId = f.ePlan.value || n.taskId;
+    n.date = f.eDate.value || n.date || todayStr();
     n.updatedAt = Date.now();
     saveNote(n);
-    f.text.value = ''; pjAutosize();
+    pjSnap = pjEditState();
+    if(!f.eTitle.value.trim()) f.eTitle.value = n.title;
     refresh();
     pjRenderEdit();
-    toast('메모에 추가했어요');
-    f.text.focus();
+    if(!silent) toast('저장했어요');
   }
 
   /* ---------- 빠른 입력 ---------- */
   function pjAutosize(){
     var ta = projForm.text;
     ta.style.height = 'auto';
-    ta.style.height = Math.min(Math.max(ta.scrollHeight + 2, 150), Math.round(window.innerHeight * 0.55)) + 'px';
+    var big = projForm.capture && projForm.capture.classList.contains('editing');
+    ta.style.height = Math.min(Math.max(ta.scrollHeight + 2, big ? Math.round(window.innerHeight * 0.5) : 150), Math.round(window.innerHeight * (big ? 0.72 : 0.55))) + 'px';
   }
   function buildProjectShell(){
     var f = projForm;
@@ -3128,7 +3152,7 @@
     f.newSub = h('input', { id:'pjNewSub', type:'text', placeholder:'새 세부 계획 이름', autocomplete:'off', hidden:true });
     f.text = h('textarea', { id:'pjText', rows:'5',
       placeholder:'노트처럼 길게 적어도 돼요.\n첫 줄은 제목, 나머지는 본문으로 저장됩니다.\n(⌘/Ctrl + Enter로 저장)',
-      oninput:pjAutosize,
+      oninput:function(){ pjAutosize(); pjDirty(); },
       onkeydown:function(e){ if((e.ctrlKey || e.metaKey) && e.key === 'Enter'){ e.preventDefault(); pjSave(); } } });
     f.due = h('input', { id:'pjDue', type:'date', title:'할 일·이슈는 마감일, 결정·메모는 메모 날짜로 저장돼요' });
     f.pri = h('select', { id:'pjPri', title:'중요도 (할 일·이슈)' }, [
@@ -3140,7 +3164,16 @@
     f.type.value = projUi.type;
 
     f.targetWrap = h('div', { class:'pj-proj', hidden:true }, [ f.target, f.newSub ]);
-    f.editBox = h('div', { class:'pj-editbox', hidden:true });
+    f.eTitle = h('input', { type:'text', class:'pj-etitle', placeholder:'메모 이름', autocomplete:'off', oninput:pjDirty });
+    f.ePlan = h('select', { class:'pj-eplan', title:'어느 계획의 메모인지', onchange:pjDirty });
+    f.eDate = h('input', { type:'date', class:'pj-edate', title:'메모 날짜', onchange:pjDirty });
+    f.editBox = h('div', { class:'pj-editbox', hidden:true }, [
+      f.eTitle,
+      h('div', { class:'pj-erow' }, [ f.ePlan, f.eDate ]),
+      h('div', { class:'pj-erow' }, [
+        h('button', { type:'button', class:'pj-lnk', text:'새 메모 쓰기 (닫기 ✕)', onclick:pjCloseEdit })
+      ])
+    ]);
     projSummary = h('span', { class:'pj-sum' });
     projList = h('div', { class:'pj-cards' });
     projWrap = h('div', { class:'pj-wrap' }, [
@@ -3202,7 +3235,7 @@
   function pjFocusTarget(t, typeKey){
     if(!projWrap) buildProjectShell();
     var p = pjProjectOf(t), f = projForm;
-    pjEdit = ''; pjRenderEdit();
+    if(pjEdit) pjCloseEdit();
     if(typeKey){ f.type.value = typeKey; projUi.type = typeKey; }
     projUi.project = p.id; projUi.target = t.id === p.id ? '' : t.id; saveProjUi();
     f.proj.value = p.id; f.newName.hidden = true;
@@ -3213,7 +3246,7 @@
     f.text.focus();
   }
   function pjSave(){
-    if(pjEdit){ pjAppendToNote(); return; }
+    if(pjEdit){ pjSaveEdit(false); return; }
     var f = projForm;
     var text = f.text.value.trim();
     var pid = f.proj.value, isNew = pid === '__new';
@@ -3297,6 +3330,7 @@
     ta.value = (ta.value && !/\n$/.test(ta.value) ? ta.value + '\n' : ta.value) + line + '\n';
     pjAutosize();
     ta.scrollTop = ta.scrollHeight;
+    pjDirty();
   }
   function recStartSpeech(){
     var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
