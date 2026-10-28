@@ -223,6 +223,14 @@
   .pj-more{ margin-top:10px; }
   .pj-more > summary{ cursor:pointer; font-size:.72rem; font-weight:700; letter-spacing:.04em; color:var(--text-muted); user-select:none; }
   .pj-more > summary:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+  .pj-rec{ flex:none; }
+  .pj-rec.on{ border-color:var(--danger); color:var(--danger); font-weight:700; }
+  .pj-recinfo{ font-size:.8rem; padding:6px 9px; border:1px dashed var(--border); border-radius:8px; background:var(--surface); line-height:1.5; }
+  .pj-rectime{ color:var(--danger); font-weight:700; }
+  .pj-recmsg{ color:var(--text-muted); }
+  .pj-rectime.pj-recmsg{ color:var(--danger); }
+  .pj-interim{ color:var(--text-muted); font-style:italic; min-height:1.2em; }
+  .pj-reclink{ color:var(--accent); font-weight:600; }
   .pj-lnk{ border:none; background:none; padding:0 2px; font:inherit; font-size:.72rem; font-weight:600; color:var(--accent); cursor:pointer; }
   .pj-lnk:hover{ text-decoration:underline; }
   .pj-group{ margin-top:8px; }
@@ -3064,6 +3072,8 @@
     f.pri = h('select', { id:'pjPri', title:'중요도 (할 일·이슈)' }, [
       h('option', { value:'normal', text:'중요도 보통' }), h('option', { value:'high', text:'중요도 높음' })
     ]);
+    f.rec = h('button', { type:'button', class:'ghost-btn pj-rec', text:'🎙 녹음', title:'노트북 마이크로 녹음하고 말한 내용을 글로 받아 적어요', onclick:function(){ recToggle(); } });
+    f.recInfo = h('div', { class:'pj-recinfo', hidden:true });
     f.save = h('button', { type:'button', class:'new-btn pj-save', text:'저장', onclick:pjSave });
     f.type.value = projUi.type;
 
@@ -3075,7 +3085,8 @@
         h('div', { class:'pj-row1' }, [ h('div', { class:'pj-proj' }, [ f.proj, f.newName ]), f.type ]),
         f.targetWrap,
         f.text,
-        h('div', { class:'pj-row2' }, [ f.due, f.pri, h('span', { class:'grow' }), f.save ])
+        f.recInfo,
+        h('div', { class:'pj-row2' }, [ f.due, f.pri, h('span', { class:'grow' }), f.rec, f.save ])
       ]),
       h('div', { class:'pj-bar' }, [
         projSummary,
@@ -3199,6 +3210,111 @@
     toast(isNew ? '새 프로젝트에 저장했어요' : '저장했어요');
     f.text.focus();
   }
+
+
+  /* ---------- 미팅 녹음 (마이크 녹음 + 받아쓰기 → 입력창) ---------- */
+  var rec = { on:false, stream:null, mr:null, chunks:[], sr:null, t0:0, timer:0, url:'', fname:'', want:false, lastErr:'' };
+  function recPad(n){ return (n < 10 ? '0' : '') + n; }
+  function recClock(sec){ return recPad(Math.floor(sec / 60)) + ':' + recPad(sec % 60); }
+  function recInfo(parts){
+    var box = projForm.recInfo;
+    box.textContent = '';
+    if(!parts){ box.hidden = true; return; }
+    parts.forEach(function(x){ if(x) box.appendChild(x); });
+    box.hidden = false;
+  }
+  function recShow(msg, extra){
+    recInfo([ h('span', { class:'pj-recmsg', text:msg }), extra || null ]);
+  }
+  function recAppend(line){
+    var ta = projForm.text;
+    ta.value = (ta.value && !/\n$/.test(ta.value) ? ta.value + '\n' : ta.value) + line + '\n';
+    pjAutosize();
+    ta.scrollTop = ta.scrollHeight;
+  }
+  function recStartSpeech(){
+    var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if(!SR) return false;
+    var sr = new SR();
+    sr.lang = 'ko-KR'; sr.continuous = true; sr.interimResults = true;
+    sr.onresult = function(e){
+      var interim = '';
+      for(var i = e.resultIndex; i < e.results.length; i++){
+        var r = e.results[i], tx = r[0].transcript.trim();
+        if(!tx) continue;
+        if(r.isFinal) recAppend('[' + recClock(Math.round((Date.now() - rec.t0) / 1000)) + '] ' + tx);
+        else interim += tx + ' ';
+      }
+      var im = projForm.recInfo.querySelector('.pj-interim');
+      if(im) im.textContent = interim;
+    };
+    sr.onerror = function(e){ rec.lastErr = e.error || ''; };
+    sr.onend = function(){ if(rec.on && rec.want){ try{ sr.start(); }catch(e){} } };   // 조용하면 브라우저가 끊으므로 다시 시작
+    try{ sr.start(); }catch(e){ return false; }
+    rec.sr = sr;
+    return true;
+  }
+  function recTick(){
+    var t = projForm.recInfo.querySelector('.pj-rectime');
+    if(t) t.textContent = '● 녹음 중 ' + recClock(Math.round((Date.now() - rec.t0) / 1000));
+  }
+  function recToggle(){ if(rec.on) recStop(); else recStart(); }
+  function recStart(){
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder){
+      toast('이 브라우저는 녹음을 지원하지 않아요. 크롬이나 엣지를 쓰세요'); return;
+    }
+    var f = projForm;
+    navigator.mediaDevices.getUserMedia({ audio:true }).then(function(stream){
+      rec.stream = stream; rec.chunks = []; rec.want = true; rec.on = true; rec.lastErr = '';
+      if(rec.url){ URL.revokeObjectURL(rec.url); rec.url = ''; }
+      var d = new Date();
+      rec.fname = 'memo-' + d.getFullYear() + recPad(d.getMonth() + 1) + recPad(d.getDate()) + '-' + recPad(d.getHours()) + recPad(d.getMinutes()) + '.webm';
+      rec.t0 = Date.now();
+      if(!f.text.value.trim()){
+        f.type.value = 'memo'; projUi.type = 'memo'; saveProjUi(); pjSyncType();
+        f.text.value = '회의 녹음 ' + todayStr() + ' ' + recPad(d.getHours()) + ':' + recPad(d.getMinutes()) + '\n';
+        pjAutosize();
+      }
+      try{
+        rec.mr = new MediaRecorder(stream);
+        rec.mr.ondataavailable = function(e){ if(e.data && e.data.size) rec.chunks.push(e.data); };
+        rec.mr.onstop = recFinish;
+        rec.mr.start(1000);
+      }catch(e){ rec.mr = null; }
+      var hasSpeech = recStartSpeech();
+      f.rec.textContent = '■ 녹음 끝내기'; f.rec.classList.add('on');
+      recInfo([
+        h('span', { class:'pj-rectime pj-recmsg' }),
+        h('span', { class:'pj-recmsg', text: hasSpeech ? ' · 말하는 내용이 아래 입력창에 글로 적혀요' : ' · 받아쓰기는 이 브라우저에서 안 돼요 (크롬 권장). 소리만 녹음해요' }),
+        h('div', { class:'pj-interim' })
+      ]);
+      recTick(); rec.timer = setInterval(recTick, 1000);
+    }, function(err){
+      var denied = err && (err.name === 'NotAllowedError' || err.name === 'SecurityError');
+      toast(denied ? '마이크 사용이 막혀 있어요. 주소창의 자물쇠에서 마이크를 허용하세요' : '마이크를 열 수 없어요');
+    });
+  }
+  function recStop(){
+    rec.want = false;
+    try{ if(rec.sr) rec.sr.stop(); }catch(e){}
+    rec.sr = null;
+    try{ if(rec.mr && rec.mr.state !== 'inactive') rec.mr.stop(); else recFinish(); }catch(e){ recFinish(); }
+  }
+  function recFinish(){
+    clearInterval(rec.timer);
+    if(rec.stream){ rec.stream.getTracks().forEach(function(t){ t.stop(); }); rec.stream = null; }
+    var sec = Math.round((Date.now() - rec.t0) / 1000);
+    rec.on = false; rec.mr = null;
+    projForm.rec.textContent = '🎙 녹음'; projForm.rec.classList.remove('on');
+    var link = null;
+    if(rec.chunks.length){
+      rec.url = URL.createObjectURL(new Blob(rec.chunks, { type: rec.chunks[0].type || 'audio/webm' }));
+      link = h('a', { class:'pj-reclink', href:rec.url, download:rec.fname, text:'음성 파일 내려받기' });
+    }
+    recShow('녹음 끝 (' + recClock(sec) + '). 내용을 고친 뒤 [저장]을 누르면 메모로 남아요. ', link);
+    projForm.text.focus();
+  }
+  window.addEventListener('pagehide', function(){ if(rec.on){ rec.want = false; try{ if(rec.sr) rec.sr.stop(); }catch(e){} } });
 
   /* ---------- 정리본 복사 ---------- */
   function pjOneLine(s){ return String(s || '').replace(/\s*\n\s*/g, ' / '); }
