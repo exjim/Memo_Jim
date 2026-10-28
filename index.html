@@ -3273,13 +3273,23 @@
       if(hd){
         return hd.requestPermission({ mode:'readwrite' }).then(function(st){ return st === 'granted' ? hd : null; }, function(){ return null; });
       }
-      return window.showDirectoryPicker({ id:'mj-memo', mode:'readwrite', startIn:'documents' }).then(function(nh){
+      return window.showDirectoryPicker({ id:'mj-memo', mode:'readwrite', startIn:'downloads' }).then(function(nh){
         return idbSet('dir', nh).catch(function(){}).then(function(){ return nh; });
       }, function(){ return null; });
     });
   }
-  function recWrite(dir, name, data){
-    return dir.getFileHandle(name, { create:true }).then(function(fh){ return fh.createWritable(); })
+  function recSafe(n){ return String(n || '').replace(/[\\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 60) || '미분류'; }
+  function pjSubName(){
+    var f = projForm, v = f.proj.value;
+    if(v === '__new') return recSafe(f.newName.value);
+    var o = f.proj.selectedOptions && f.proj.selectedOptions[0];
+    return v ? recSafe(o && o.textContent) : '미분류';
+  }
+  // 고른 폴더 안에 프로젝트 이름 폴더를 만들어 거기에 쓴다
+  function recWrite(dir, name, data, sub){
+    return (sub ? dir.getDirectoryHandle(sub, { create:true }) : Promise.resolve(dir))
+      .then(function(d){ return d.getFileHandle(name, { create:true }); })
+      .then(function(fh){ return fh.createWritable(); })
       .then(function(w){ return w.write(data).then(function(){ return w.close(); }); });
   }
   function recTick(){
@@ -3324,6 +3334,7 @@
   }
   function recStop(){
     rec.dirP = recDirReady(false);      // 클릭 직후에 폴더 권한을 받아 둔다
+    rec.sub = pjSubName();
     rec.want = false;
     try{ if(rec.sr) rec.sr.stop(); }catch(e){}
     rec.sr = null;
@@ -3339,7 +3350,7 @@
     if(rec.chunks.length){
       blob = new Blob(rec.chunks, { type: rec.chunks[0].type || 'audio/webm' });
       rec.url = URL.createObjectURL(blob);
-      link = h('a', { class:'pj-reclink', href:rec.url, download:rec.fname, text:'음성 파일 다시 내려받기' });
+      link = h('a', { class:'pj-reclink', href:rec.url, download:recSafe(rec.sub) + '_' + rec.fname, text:'음성 파일 다시 내려받기' });
     }
     var base = rec.fname.replace(/\.webm$/, ''), txt = projForm.text.value;
     var changeBtn = h('button', { type:'button', class:'pj-lnk', text:'저장 폴더 바꾸기', onclick:function(){
@@ -3348,17 +3359,17 @@
     var done = function(dir){
       var jobs = [];
       if(dir){
-        if(blob) jobs.push(recWrite(dir, rec.fname, blob));
-        if(txt.trim()) jobs.push(recWrite(dir, base + '.txt', txt));
+        if(blob) jobs.push(recWrite(dir, rec.fname, blob, rec.sub));
+        if(txt.trim()) jobs.push(recWrite(dir, base + '.txt', txt, rec.sub));
         Promise.all(jobs).then(function(){
-          recShow('녹음 끝 (' + recClock(sec) + '). "' + dir.name + '" 폴더에 저장했어요 (' + base + '). 내용을 고친 뒤 [저장]을 누르면 메모로도 남아요. ', changeBtn);
+          recShow('녹음 끝 (' + recClock(sec) + '). "' + dir.name + ' / ' + rec.sub + '" 폴더에 저장했어요 (' + base + '). 내용을 고친 뒤 [저장]을 누르면 메모로도 남아요. ', changeBtn);
         }, function(){
           recShow('폴더에 쓰지 못해서 내려받기로 바꿨어요. ', link); if(link) link.click();
         });
       } else {
         // 폴더를 못 쓰는 브라우저·거절 → 평소 내려받기 폴더로
         if(link){ link.click(); }
-        recShow('녹음 끝 (' + recClock(sec) + '). 음성을 내려받았어요. 내용을 고친 뒤 [저장]을 누르면 메모로 남아요. ', changeBtn);
+        recShow('녹음 끝 (' + recClock(sec) + '). 다운로드 폴더에 "' + rec.sub + '_…"로 내려받았어요. 내용을 고친 뒤 [저장]을 누르면 메모로 남아요. ', changeBtn);
       }
     };
     (rec.dirP || Promise.resolve(null)).then(done, function(){ done(null); });
@@ -3409,7 +3420,14 @@
   }
   function pjCopy(){
     if(!pjGroups().groups.length){ toast('정리할 항목이 아직 없어요'); return; }
-    copyText(pjMarkdown());
+    var md = pjMarkdown(), d = new Date();
+    var name = '프로젝트현황-' + d.getFullYear() + recPad(d.getMonth() + 1) + recPad(d.getDate()) + '-' + recPad(d.getHours()) + recPad(d.getMinutes()) + '.md';
+    copyText(md);
+    recDirReady(false).then(function(dir){
+      if(dir) return recWrite(dir, name, md, '').then(function(){ toast('"' + dir.name + '" 폴더에 ' + name + ' 저장했어요'); });
+      var a = h('a', { href:URL.createObjectURL(new Blob([md], { type:'text/markdown' })), download:name });
+      document.body.appendChild(a); a.click(); a.remove();
+    }).catch(function(){});
   }
 
   /* ---------- 현황 그리기 ---------- */
