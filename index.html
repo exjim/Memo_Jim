@@ -3254,6 +3254,34 @@
     rec.sr = sr;
     return true;
   }
+
+  // 저장 폴더 (Chrome/Edge): 한 번 골라 두면 기억해서, 녹음을 끝낼 때 그 폴더로 바로 저장
+  function idbOpen(){
+    return new Promise(function(res, rej){
+      var rq = indexedDB.open('mj-rec', 1);
+      rq.onupgradeneeded = function(){ rq.result.createObjectStore('kv'); };
+      rq.onsuccess = function(){ res(rq.result); }; rq.onerror = function(){ rej(rq.error); };
+    });
+  }
+  function idbGet(k){ return idbOpen().then(function(db){ return new Promise(function(res, rej){ var r = db.transaction('kv').objectStore('kv').get(k); r.onsuccess = function(){ res(r.result); }; r.onerror = function(){ rej(r.error); }; }); }); }
+  function idbSet(k, v){ return idbOpen().then(function(db){ return new Promise(function(res, rej){ var tx = db.transaction('kv', 'readwrite'); tx.objectStore('kv').put(v, k); tx.oncomplete = res; tx.onerror = function(){ rej(tx.error); }; }); }); }
+  // 사용자 클릭 안에서 불러야 권한 창이 뜬다. 실패하면 null (→ 일반 내려받기)
+  function recDirReady(forcePick){
+    if(!window.showDirectoryPicker) return Promise.resolve(null);
+    var get = forcePick ? Promise.resolve(null) : idbGet('dir').catch(function(){ return null; });
+    return get.then(function(hd){
+      if(hd){
+        return hd.requestPermission({ mode:'readwrite' }).then(function(st){ return st === 'granted' ? hd : null; }, function(){ return null; });
+      }
+      return window.showDirectoryPicker({ id:'mj-memo', mode:'readwrite', startIn:'documents' }).then(function(nh){
+        return idbSet('dir', nh).catch(function(){}).then(function(){ return nh; });
+      }, function(){ return null; });
+    });
+  }
+  function recWrite(dir, name, data){
+    return dir.getFileHandle(name, { create:true }).then(function(fh){ return fh.createWritable(); })
+      .then(function(w){ return w.write(data).then(function(){ return w.close(); }); });
+  }
   function recTick(){
     var t = projForm.recInfo.querySelector('.pj-rectime');
     if(t) t.textContent = '● 녹음 중 ' + recClock(Math.round((Date.now() - rec.t0) / 1000));
@@ -3295,6 +3323,7 @@
     });
   }
   function recStop(){
+    rec.dirP = recDirReady(false);      // 클릭 직후에 폴더 권한을 받아 둔다
     rec.want = false;
     try{ if(rec.sr) rec.sr.stop(); }catch(e){}
     rec.sr = null;
@@ -3306,12 +3335,34 @@
     var sec = Math.round((Date.now() - rec.t0) / 1000);
     rec.on = false; rec.mr = null;
     projForm.rec.textContent = '🎙 녹음'; projForm.rec.classList.remove('on');
-    var link = null;
+    var link = null, blob = null;
     if(rec.chunks.length){
-      rec.url = URL.createObjectURL(new Blob(rec.chunks, { type: rec.chunks[0].type || 'audio/webm' }));
-      link = h('a', { class:'pj-reclink', href:rec.url, download:rec.fname, text:'음성 파일 내려받기' });
+      blob = new Blob(rec.chunks, { type: rec.chunks[0].type || 'audio/webm' });
+      rec.url = URL.createObjectURL(blob);
+      link = h('a', { class:'pj-reclink', href:rec.url, download:rec.fname, text:'음성 파일 다시 내려받기' });
     }
-    recShow('녹음 끝 (' + recClock(sec) + '). 내용을 고친 뒤 [저장]을 누르면 메모로 남아요. ', link);
+    var base = rec.fname.replace(/\.webm$/, ''), txt = projForm.text.value;
+    var changeBtn = h('button', { type:'button', class:'pj-lnk', text:'저장 폴더 바꾸기', onclick:function(){
+      recDirReady(true).then(function(d){ toast(d ? '저장 폴더: ' + d.name : '폴더를 고르지 않았어요'); });
+    } });
+    var done = function(dir){
+      var jobs = [];
+      if(dir){
+        if(blob) jobs.push(recWrite(dir, rec.fname, blob));
+        if(txt.trim()) jobs.push(recWrite(dir, base + '.txt', txt));
+        Promise.all(jobs).then(function(){
+          recShow('녹음 끝 (' + recClock(sec) + '). "' + dir.name + '" 폴더에 저장했어요 (' + base + '). 내용을 고친 뒤 [저장]을 누르면 메모로도 남아요. ', changeBtn);
+        }, function(){
+          recShow('폴더에 쓰지 못해서 내려받기로 바꿨어요. ', link); if(link) link.click();
+        });
+      } else {
+        // 폴더를 못 쓰는 브라우저·거절 → 평소 내려받기 폴더로
+        if(link){ link.click(); }
+        recShow('녹음 끝 (' + recClock(sec) + '). 음성을 내려받았어요. 내용을 고친 뒤 [저장]을 누르면 메모로 남아요. ', changeBtn);
+      }
+    };
+    (rec.dirP || Promise.resolve(null)).then(done, function(){ done(null); });
+    rec.dirP = null;
     projForm.text.focus();
   }
   window.addEventListener('pagehide', function(){ if(rec.on){ rec.want = false; try{ if(rec.sr) rec.sr.stop(); }catch(e){} } });
