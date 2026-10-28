@@ -223,6 +223,12 @@
   .pj-more{ margin-top:10px; }
   .pj-more > summary{ cursor:pointer; font-size:.72rem; font-weight:700; letter-spacing:.04em; color:var(--text-muted); user-select:none; }
   .pj-more > summary:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+  .pj-capture.editing .pj-row1, .pj-capture.editing .pj-proj, .pj-capture.editing #pjDue, .pj-capture.editing #pjPri{ display:none; }
+  .pj-editbox{ border:1px solid var(--accent); border-radius:9px; background:var(--surface); padding:9px 11px; }
+  .pj-eh{ display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; }
+  .pj-et{ flex:1; min-width:0; font-weight:650; font-size:.92rem; overflow-wrap:anywhere; }
+  .pj-ew{ font-size:.72rem; color:var(--text-muted); }
+  .pj-eb{ margin-top:6px; font-size:.84rem; line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; max-height:14em; overflow-y:auto; color:var(--text); }
   .pj-rec{ flex:none; }
   .pj-rec.on{ border-color:var(--danger); color:var(--danger); font-weight:700; }
   .pj-recinfo{ font-size:.8rem; padding:6px 9px; border:1px dashed var(--border); border-radius:8px; background:var(--surface); line-height:1.5; }
@@ -2981,6 +2987,7 @@
   var projUi = Object.assign({ project:'', target:'', type:'todo' }, lsGet('mj.projui', {}));
   var projWrap = null, projList = null, projSummary = null, projForm = {};
   var openDoneP = {};
+  var pjEdit = '';        // 입력창에 올려 둔 메모 id (있으면 입력·녹음이 이 메모 밑에 이어 붙는다)
   function saveProjUi(){ lsSet('mj.projui', projUi); }
   function pjType(key){ return P_TYPES.find(function(t){ return t.key === key; }) || P_TYPES[0]; }
   function pjTops(){ return children('root').filter(function(t){ return !isPersonal(t); }); }
@@ -3040,6 +3047,61 @@
     return { groups:groups, bare:bare };
   }
 
+
+  /* ---------- 메모를 입력창에 올려 두고 이어 쓰기 ---------- */
+  function pjOpenNote(n){
+    var tk = n.taskId ? getTask(n.taskId) : null;
+    if(!projWrap) buildProjectShell();
+    if(tk){ projUi.project = pjProjectOf(tk).id; saveProjUi(); projForm.proj.value = projUi.project; }
+    pjEdit = n.id;
+    pjRenderEdit();
+    projWrap.scrollTop = 0;
+    projForm.text.focus();
+  }
+  function pjCloseEdit(){
+    pjEdit = '';
+    pjRenderEdit();
+  }
+  function pjRenderEdit(){
+    var f = projForm, n = pjEdit ? getNote(pjEdit) : null;
+    if(pjEdit && !n) pjEdit = '';
+    var on = !!n;
+    f.capture.classList.toggle('editing', on);
+    f.editBox.hidden = !on;
+    f.editBox.textContent = '';
+    f.save.textContent = on ? '이 메모에 추가' : '저장';
+    f.text.placeholder = on
+      ? '여기에 쓰거나 🎙 녹음하면 위 메모 밑에 이어서 붙어요.\n(⌘/Ctrl + Enter로 추가)'
+      : '노트처럼 길게 적어도 돼요.\n첫 줄은 제목, 나머지는 본문으로 저장됩니다.\n(⌘/Ctrl + Enter로 저장)';
+    if(!on) return;
+    var tk = n.taskId ? getTask(n.taskId) : null;
+    var where = tk ? (pjProjectOf(tk).id === tk.id ? '프로젝트 전체' : pjPath(tk)) : '미분류';
+    var body = (n.body || '').trim();
+    f.editBox.appendChild(h('div', { class:'pj-eh' }, [
+      h('span', { class:'pj-et', text:'📝 ' + noteTitle(n) }),
+      h('span', { class:'pj-ew', text:where }),
+      h('button', { type:'button', class:'pj-lnk', text:'크게 열기', onclick:function(){ selectNote(n.id); } }),
+      h('button', { type:'button', class:'pj-lnk', text:'닫기 ✕', onclick:pjCloseEdit })
+    ]));
+    f.editBox.appendChild(h('div', { class:'pj-eb', text: body || '(아직 본문이 없어요)' }));
+    var eb = f.editBox.querySelector('.pj-eb'); eb.scrollTop = eb.scrollHeight;
+  }
+  function pjAppendToNote(){
+    var f = projForm, n = getNote(pjEdit), text = f.text.value.trim();
+    if(!n){ pjCloseEdit(); toast('메모를 찾을 수 없어요'); return; }
+    if(!text){ toast('추가할 내용을 입력하세요'); f.text.focus(); return; }
+    var d = new Date();
+    var stamp = todayStr() + ' ' + recPad(d.getHours()) + ':' + recPad(d.getMinutes());
+    n.body = ((n.body || '').replace(/\s+$/, '') ? (n.body || '').replace(/\s+$/, '') + '\n\n' : '') + '── ' + stamp + ' ──\n' + text;
+    n.updatedAt = Date.now();
+    saveNote(n);
+    f.text.value = ''; pjAutosize();
+    refresh();
+    pjRenderEdit();
+    toast('메모에 추가했어요');
+    f.text.focus();
+  }
+
   /* ---------- 빠른 입력 ---------- */
   function pjAutosize(){
     var ta = projForm.text;
@@ -3078,10 +3140,12 @@
     f.type.value = projUi.type;
 
     f.targetWrap = h('div', { class:'pj-proj', hidden:true }, [ f.target, f.newSub ]);
+    f.editBox = h('div', { class:'pj-editbox', hidden:true });
     projSummary = h('span', { class:'pj-sum' });
     projList = h('div', { class:'pj-cards' });
     projWrap = h('div', { class:'pj-wrap' }, [
-      h('div', { class:'pj-capture' }, [
+      f.capture = h('div', { class:'pj-capture' }, [
+        f.editBox,
         h('div', { class:'pj-row1' }, [ h('div', { class:'pj-proj' }, [ f.proj, f.newName ]), f.type ]),
         f.targetWrap,
         f.text,
@@ -3138,6 +3202,7 @@
   function pjFocusTarget(t, typeKey){
     if(!projWrap) buildProjectShell();
     var p = pjProjectOf(t), f = projForm;
+    pjEdit = ''; pjRenderEdit();
     if(typeKey){ f.type.value = typeKey; projUi.type = typeKey; }
     projUi.project = p.id; projUi.target = t.id === p.id ? '' : t.id; saveProjUi();
     f.proj.value = p.id; f.newName.hidden = true;
@@ -3148,6 +3213,7 @@
     f.text.focus();
   }
   function pjSave(){
+    if(pjEdit){ pjAppendToNote(); return; }
     var f = projForm;
     var text = f.text.value.trim();
     var pid = f.proj.value, isNew = pid === '__new';
@@ -3308,7 +3374,7 @@
       var d = new Date();
       rec.fname = 'memo-' + d.getFullYear() + recPad(d.getMonth() + 1) + recPad(d.getDate()) + '-' + recPad(d.getHours()) + recPad(d.getMinutes()) + '.webm';
       rec.t0 = Date.now();
-      if(!f.text.value.trim()){
+      if(!pjEdit && !f.text.value.trim()){
         f.type.value = 'memo'; projUi.type = 'memo'; saveProjUi(); pjSyncType();
         f.text.value = '회의 녹음 ' + todayStr() + ' ' + recPad(d.getHours()) + ':' + recPad(d.getMinutes()) + '\n';
         pjAutosize();
@@ -3454,7 +3520,7 @@
   // 노트처럼 제목 + 본문 전체를 보여주는 카드
   function pjNoteCard(n){
     var d = noteDate(n), body = (n.body || '').trim();
-    return h('article', { class:'pj-note' + (n.kind ? ' k-' + n.kind : ''), title:'눌러서 크게 열기', onclick:function(){ selectNote(n.id); } }, [
+    return h('article', { class:'pj-note' + (n.kind ? ' k-' + n.kind : ''), title:'눌러서 위 입력창에 올려 이어 쓰기', onclick:function(){ pjOpenNote(n); } }, [
       h('div', { class:'pj-nh' }, [
         h('span', { class:'pj-nt', text:noteTitle(n) }),
         h('span', { class:'pj-nk', text:pjKindLabel(n) }),
@@ -3522,6 +3588,7 @@
     if(!projWrap) buildProjectShell();
     if(calBody.firstChild !== projWrap || calBody.childNodes.length !== 1){ calBody.textContent = ''; calBody.appendChild(projWrap); }
     pjUpdateOptions();
+    pjRenderEdit();
     var data = pjGroups();
     var open = 0, late = 0;
     data.groups.forEach(function(g){ open += g.open.length; late += g.overdue; });
