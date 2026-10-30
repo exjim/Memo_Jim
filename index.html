@@ -230,6 +230,21 @@
   .pj-capture .pj-eplan{ flex:1 1 220px; width:auto; }
   .pj-capture .pj-edate{ flex:0 1 160px; width:auto; }
   .pj-capture.editing textarea{ min-height:46vh; font-size:.95rem; line-height:1.7; }
+  .pj-capture textarea{ unicode-bidi:plaintext; }
+  .pj-recopts{ display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; font-size:.8rem; }
+  .pj-capture .pj-src{ width:auto; flex:0 1 190px; }
+  .pj-tglbl{ color:var(--text-muted); font-weight:600; }
+  .pj-tg{ display:inline-flex; align-items:center; gap:4px; cursor:pointer; }
+  .pj-capture .pj-tg input{ width:auto; }
+  .pj-recopts .grow{ flex:1; }
+  .pj-keyrow{ display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+  .pj-capture .pj-keyrow input{ flex:1 1 240px; width:auto; }
+  .pj-keynote{ flex:1 1 100%; font-size:.72rem; color:var(--text-muted); line-height:1.5; }
+  .pj-live{ max-height:34vh; overflow-y:auto; border:1px solid var(--border); border-radius:9px; background:var(--surface); padding:6px 10px; }
+  .pj-seg{ padding:5px 0; border-top:1px solid var(--line); }
+  .pj-seg:first-child{ border-top:none; }
+  .pj-so{ font-size:.86rem; font-weight:600; overflow-wrap:anywhere; unicode-bidi:plaintext; }
+  .pj-str{ font-size:.86rem; color:var(--accent); margin-top:2px; overflow-wrap:anywhere; unicode-bidi:plaintext; }
   .pj-rec{ flex:none; }
   .pj-rec.on{ border-color:var(--danger); color:var(--danger); font-weight:700; }
   .pj-recinfo{ font-size:.8rem; padding:6px 9px; border:1px dashed var(--border); border-radius:8px; background:var(--surface); line-height:1.5; }
@@ -3162,6 +3177,7 @@
     f.recInfo = h('div', { class:'pj-recinfo', hidden:true });
     f.save = h('button', { type:'button', class:'new-btn pj-save', text:'저장', onclick:pjSave });
     f.type.value = projUi.type;
+    recBuildOpts();
 
     f.targetWrap = h('div', { class:'pj-proj', hidden:true }, [ f.target, f.newSub ]);
     f.eTitle = h('input', { type:'text', class:'pj-etitle', placeholder:'메모 이름', autocomplete:'off', oninput:pjDirty });
@@ -3181,6 +3197,9 @@
         f.editBox,
         h('div', { class:'pj-row1' }, [ h('div', { class:'pj-proj' }, [ f.proj, f.newName ]), f.type ]),
         f.targetWrap,
+        f.recOpts,
+        f.keyRow,
+        f.live,
         f.text,
         f.recInfo,
         h('div', { class:'pj-row2' }, [ f.due, f.pri, h('span', { class:'grow' }), f.rec, f.save ])
@@ -3332,27 +3351,162 @@
     ta.scrollTop = ta.scrollHeight;
     pjDirty();
   }
+  /* ---------- 다국어 통역 (한국어·中文·فارسی·English) ---------- */
+  var REC_LANGS = [
+    { k:'ko', n:'한국어', sr:'ko-KR', en:'Korean' },
+    { k:'zh', n:'中文', sr:'zh-CN', en:'Chinese (Simplified)' },
+    { k:'fa', n:'فارسی', sr:'fa-IR', en:'Persian (Farsi)' },
+    { k:'en', n:'English', sr:'en-US', en:'English' }
+  ];
+  var recCfg = Object.assign({ src:'ko', tg:{ ko:true, zh:true, fa:true } }, lsGet('mj.recCfg', {}));
+  function recLang(k){ return REC_LANGS.filter(function(l){ return l.k === k; })[0] || REC_LANGS[0]; }
+  function recSave(){ lsSet('mj.recCfg', recCfg); }
+  function recKey(){ var k = lsGet('mj.claudeKey', ''); return typeof k === 'string' ? k : ''; }
+  // Claude API (본인 키를 이 브라우저에만 저장해서 직접 호출)
+  function claudeAsk(system, user, maxTokens){
+    var key = recKey();
+    if(!key) return Promise.reject(new Error('nokey'));
+    return fetch('https://api.anthropic.com/v1/messages', {
+      method:'POST',
+      headers:{ 'content-type':'application/json', 'x-api-key':key, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
+      body: JSON.stringify({ model:'claude-sonnet-5-5', max_tokens:maxTokens || 2000, system:system, messages:[{ role:'user', content:user }] })
+    }).then(function(r){
+      return r.json().then(function(j){
+        if(!r.ok) throw new Error((j.error && j.error.message) || ('오류 ' + r.status));
+        return (j.content || []).map(function(c){ return c.text || ''; }).join('').trim();
+      });
+    });
+  }
+  // 브라우저 내장 번역(Chrome Translator) 준비 — 클릭 직후에 불러야 모델 내려받기가 허용된다
+  function recPrepTranslators(){
+    rec.tr = rec.tr || {};
+    if(!('Translator' in self)) return;
+    var src = recCfg.src;
+    REC_LANGS.forEach(function(t){
+      if(!recCfg.tg[t.k] || t.k === src) return;
+      var pair = src + '>' + t.k;
+      if(rec.tr[pair] || rec.trBusy && rec.trBusy[pair]) return;
+      rec.trBusy = rec.trBusy || {}; rec.trBusy[pair] = 1;
+      var o = { sourceLanguage:src, targetLanguage:t.k };
+      Promise.resolve(self.Translator.availability(o)).then(function(a){
+        if(a === 'unavailable') return;
+        return self.Translator.create(o).then(function(x){ rec.tr[pair] = x; });
+      }).catch(function(){}).then(function(){ delete rec.trBusy[pair]; });
+    });
+  }
+  function recClaudeTr(text, src, tgt){
+    if(!recKey()) return Promise.resolve('');
+    return claudeAsk('You are a live meeting interpreter. Translate the user message from ' + recLang(src).en + ' into ' + recLang(tgt).en + '. Output only the translation, nothing else.', text, 500).catch(function(){ return ''; });
+  }
+  function recTranslate(text, src, tgt){
+    var tr = rec.tr && rec.tr[src + '>' + tgt];
+    if(tr) return Promise.resolve(tr.translate(text)).catch(function(){ return recClaudeTr(text, src, tgt); });
+    return recClaudeTr(text, src, tgt);
+  }
+  function recSegment(tx){
+    var f = projForm, src = recCfg.src, sl = recLang(src);
+    var stamp = '[' + recClock(Math.round((Date.now() - rec.t0) / 1000)) + ']' + (src !== 'ko' ? ' (' + sl.n + ')' : '');
+    var box = f.live; box.hidden = false;
+    var node = h('div', { class:'pj-seg' }, [ h('div', { class:'pj-so', dir:'auto', text:stamp + ' ' + tx }) ]);
+    box.appendChild(node);
+    while(box.children.length > 40) box.removeChild(box.firstChild);
+    box.scrollTop = box.scrollHeight;
+    var tg = REC_LANGS.filter(function(l){ return recCfg.tg[l.k] && l.k !== src; });
+    var jobs = tg.map(function(l){
+      return recTranslate(tx, src, l.k).then(function(r){
+        r = (r || '').trim();
+        node.appendChild(h('div', { class:'pj-str', dir:'auto' }, [ h('b', { text:l.n + ' ' }), r || '(번역 안 됨 — 아래 안내 참고)' ]));
+        box.scrollTop = box.scrollHeight;
+        return r ? { l:l, r:r } : null;
+      }, function(){ return null; });
+    });
+    // 입력창에는 번역이 끝난 순서대로가 아니라 말한 순서대로 쌓는다
+    rec.q = (rec.q || Promise.resolve()).then(function(){ return Promise.all(jobs); }).then(function(res){
+      var out = stamp + ' ' + tx;
+      res.forEach(function(x){ if(x) out += '\n   ↳ ' + x.l.n + ': ' + x.r; });
+      recAppend(out);
+    });
+  }
   function recStartSpeech(){
     var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if(!SR) return false;
     var sr = new SR();
-    sr.lang = 'ko-KR'; sr.continuous = true; sr.interimResults = true;
+    sr.lang = recLang(recCfg.src).sr; sr.continuous = true; sr.interimResults = true;
     sr.onresult = function(e){
       var interim = '';
       for(var i = e.resultIndex; i < e.results.length; i++){
         var r = e.results[i], tx = r[0].transcript.trim();
         if(!tx) continue;
-        if(r.isFinal) recAppend('[' + recClock(Math.round((Date.now() - rec.t0) / 1000)) + '] ' + tx);
+        if(r.isFinal) recSegment(tx);
         else interim += tx + ' ';
       }
       var im = projForm.recInfo.querySelector('.pj-interim');
       if(im) im.textContent = interim;
     };
     sr.onerror = function(e){ rec.lastErr = e.error || ''; };
-    sr.onend = function(){ if(rec.on && rec.want){ try{ sr.start(); }catch(e){} } };   // 조용하면 브라우저가 끊으므로 다시 시작
+    sr.onend = function(){
+      if(rec.on && rec.want){ sr.lang = recLang(recCfg.src).sr; try{ sr.start(); }catch(e){} }   // 조용하거나 언어를 바꾸면 끊기므로 다시 시작
+    };
     try{ sr.start(); }catch(e){ return false; }
     rec.sr = sr;
     return true;
+  }
+  // 입력창 위 통역 설정 줄
+  function recBuildOpts(){
+    var f = projForm;
+    f.src = h('select', { class:'pj-src', title:'지금 말하는 언어 (바뀌면 여기서 바꾸세요)', onchange:function(){
+      recCfg.src = f.src.value; recSave();
+      recPrepTranslators();
+      if(rec.on && rec.sr){ try{ rec.sr.stop(); }catch(e){} }
+    } }, REC_LANGS.map(function(l){ return h('option', { value:l.k, text:'말하는 언어: ' + l.n }); }));
+    f.src.value = recCfg.src;
+    var chk = REC_LANGS.map(function(l){
+      var cb = h('input', { type:'checkbox', checked:!!recCfg.tg[l.k], onchange:function(){
+        recCfg.tg[l.k] = cb.checked; recSave(); recPrepTranslators();
+      } });
+      return h('label', { class:'pj-tg' }, [ cb, h('span', { text:l.n }) ]);
+    });
+    f.sum = h('button', { type:'button', class:'ghost-btn', text:'✨ 정리·요약', title:'미팅 기록을 안건·결정·할 일로 정리하고 요약해요', onclick:recSummarize });
+    f.keyBtn = h('button', { type:'button', class:'pj-lnk', text:'AI 키 설정', onclick:function(){ f.keyRow.hidden = !f.keyRow.hidden; } });
+    f.keyIn = h('input', { type:'password', placeholder:'Anthropic API 키 (sk-ant-…)', autocomplete:'off' });
+    f.keyRow = h('div', { class:'pj-keyrow', hidden:true }, [
+      f.keyIn,
+      h('button', { type:'button', class:'ghost-btn', text:'저장', onclick:function(){
+        var v = f.keyIn.value.trim(); if(!v){ toast('키를 입력하세요'); return; }
+        lsSet('mj.claudeKey', v); f.keyIn.value = ''; f.keyRow.hidden = true; toast('이 브라우저에만 저장했어요');
+      } }),
+      h('button', { type:'button', class:'ghost-btn', text:'지우기', onclick:function(){ lsSet('mj.claudeKey', ''); toast('키를 지웠어요'); } }),
+      h('div', { class:'pj-keynote', text:'키는 이 브라우저에만 저장되고 서버에 올라가지 않아요. 키가 없어도 요약은 [정리·요약]이 요청문을 복사해 주면 Claude 대화창에 붙여 넣어 쓸 수 있어요.' })
+    ]);
+    f.live = h('div', { class:'pj-live', hidden:true });
+    f.recOpts = h('div', { class:'pj-recopts' }, [
+      f.src, h('span', { class:'pj-tglbl', text:'번역' }), chk, h('span', { class:'grow' }), f.keyBtn, f.sum
+    ]);
+  }
+  function recSummarize(){
+    var f = projForm, text = f.text.value.trim();
+    if(!text){ toast('정리할 미팅 기록이 없어요'); return; }
+    var others = REC_LANGS.filter(function(l){ return recCfg.tg[l.k] && l.k !== 'ko'; }).map(function(l){ return l.en; });
+    var prompt = '아래는 회의를 음성으로 받아쓴 기록입니다. 오타·끊김이 있을 수 있고, 줄 앞의 [시:분]은 녹음 시각, ↳ 줄은 통역입니다. 기록에 없는 내용은 만들지 말고 정리해 주세요.\n\n'
+      + '형식(한국어):\n## 요약 (3~5줄)\n## 안건별 논의\n## 결정 사항\n## 할 일 (담당자·기한이 나오면 포함)\n## 이슈·확인 필요\n## 다음 단계\n'
+      + (others.length ? '\n그다음 같은 내용을 ' + others.join(', ') + ' 로도 각각 제공해 주세요 (각 언어마다 요약·결정 사항·할 일만).\n' : '')
+      + '\n--- 회의 기록 ---\n' + text;
+    if(!recKey()){
+      copyText(prompt);
+      toast('요청문을 복사했어요. Claude 대화창에 붙여 넣으세요 (앱에서 바로 하려면 AI 키 설정)');
+      return;
+    }
+    f.sum.disabled = true; f.sum.textContent = '정리 중…';
+    claudeAsk('당신은 회의 기록을 정리하는 비서입니다. 사실만 쓰고, 기록에 없는 내용은 지어내지 않습니다.', prompt, 4000).then(function(out){
+      var d = new Date();
+      var stamp = todayStr() + ' ' + recPad(d.getHours()) + ':' + recPad(d.getMinutes());
+      f.text.value = f.text.value.replace(/\s+$/, '') + '\n\n── AI 정리 ' + stamp + ' ──\n' + out + '\n';
+      pjAutosize(); f.text.scrollTop = f.text.scrollHeight;
+      pjDirty();
+      toast('정리·요약을 아래에 붙였어요');
+    }, function(e){
+      toast(e && e.message === 'nokey' ? 'AI 키가 필요해요' : '정리 실패: ' + (e && e.message || ''));
+    }).then(function(){ f.sum.disabled = false; f.sum.textContent = '✨ 정리·요약'; });
   }
 
   // 저장 폴더 (Chrome/Edge): 한 번 골라 두면 기억해서, 녹음을 끝낼 때 그 폴더로 바로 저장
@@ -3402,6 +3556,7 @@
       toast('이 브라우저는 녹음을 지원하지 않아요. 크롬이나 엣지를 쓰세요'); return;
     }
     var f = projForm;
+    recPrepTranslators();
     navigator.mediaDevices.getUserMedia({ audio:true }).then(function(stream){
       rec.stream = stream; rec.chunks = []; rec.want = true; rec.on = true; rec.lastErr = '';
       if(rec.url){ URL.revokeObjectURL(rec.url); rec.url = ''; }
